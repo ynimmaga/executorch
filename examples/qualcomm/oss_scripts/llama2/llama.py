@@ -17,9 +17,7 @@ from executorch.backends.qualcomm._passes.build_quant_io import BuildQuantIo
 from executorch.backends.qualcomm.partition.qnn_partitioner import QnnPartitioner
 
 from executorch.backends.qualcomm.quantizer.quantizer import QuantDtype
-from executorch.backends.qualcomm.serialization.qnn_compile_spec_schema import (
-    QcomChipset,
-)
+from executorch.backends.qualcomm.serialization.qc_schema import QcomChipset
 from executorch.backends.qualcomm.utils.constants import QCOM_QUANTIZED_IO
 from executorch.backends.qualcomm.utils.utils import (
     capture_program,
@@ -332,9 +330,6 @@ class SingleLlama:
 
     def get_example_inputs(self):
         return self.llama_model.get_example_inputs()
-
-    def get_export_inputs(self):
-        return self.llama_model.get_export_inputs()
 
 
 def compile(args):
