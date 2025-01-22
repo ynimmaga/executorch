@@ -1,5 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
-# Copyright 2024 Arm Limited and/or its affiliates.
+# Copyright 2024-2025 Arm Limited and/or its affiliates.
 # All rights reserved.
 #
 # This source code is licensed under the BSD-style license found in the
@@ -10,7 +10,7 @@ import unittest
 from typing import Tuple
 
 import torch
-from executorch.backends.arm.test import common
+from executorch.backends.arm.test import common, conftest
 from executorch.backends.arm.test.tester.arm_tester import ArmTester
 from executorch.exir import EdgeCompileConfig
 from executorch.exir.backend.compile_spec_schema import CompileSpec
@@ -120,10 +120,8 @@ class TestMinimum(unittest.TestCase):
         tester = self._test_minimum_ethos_BI_pipeline(
             self.Minimum(), common.get_u55_compile_spec(), test_data
         )
-        if common.is_option_enabled("corstone_fvp"):
-            tester.run_method_and_compare_outputs(
-                qtol=1, inputs=test_data, target_board="corstone-300"
-            )
+        if conftest.is_option_enabled("corstone_fvp"):
+            tester.run_method_and_compare_outputs(qtol=1, inputs=test_data)
 
     @parameterized.expand(Minimum.test_parameters)
     def test_minimum_u85_BI(self, operand1: torch.Tensor, operand2: torch.Tensor):
@@ -131,7 +129,8 @@ class TestMinimum(unittest.TestCase):
         tester = self._test_minimum_ethos_BI_pipeline(
             self.Minimum(), common.get_u85_compile_spec(), test_data
         )
-        if common.is_option_enabled("corstone_fvp"):
+        if conftest.is_option_enabled("corstone_fvp"):
             tester.run_method_and_compare_outputs(
-                qtol=1, inputs=test_data, target_board="corstone-320"
+                qtol=1,
+                inputs=test_data,
             )
