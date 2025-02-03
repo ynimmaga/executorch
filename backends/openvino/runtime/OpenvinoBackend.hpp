@@ -11,6 +11,16 @@
 #include <executorch/runtime/core/exec_aten/util/dim_order_util.h>
 #include <executorch/runtime/core/exec_aten/util/scalar_type_util.h>
 
+#ifdef _WIN32
+#ifdef OPENVINO_BACKEND_EXPORTS
+#define OPENVINO_BACKEND_API __declspec(dllexport)
+#else
+#define OPENVINO_BACKEND_API __declspec(dllimport)
+#endif
+#else
+#define OPENVINO_BACKEND_API
+#endif
+
 using namespace std;
 using executorch::aten::ScalarType;
 using executorch::runtime::ArrayRef;
@@ -34,7 +44,7 @@ typedef struct {
     std::shared_ptr<ov::InferRequest> infer_request;
 } ExecutionHandle;
 
-class OpenvinoBackend final : public ::executorch::runtime::BackendInterface {
+class OPENVINO_BACKEND_API OpenvinoBackend final : public ::executorch::runtime::BackendInterface {
  public:
   OpenvinoBackend();
   ~OpenvinoBackend() = default;

@@ -198,6 +198,7 @@ class MemoryAllocator {
   int32_t prof_id_ = -1;
 };
 
+
 #if ET_HAVE_GNU_STATEMENT_EXPRESSIONS
 /**
  * Tries allocating from the specified MemoryAllocator*.
@@ -285,33 +286,73 @@ class MemoryAllocator {
  * is to directly allocate the memory.
  * e.g. memory_allocator__->allocate(nbytes__);
  */
+#define ET_TRY_ALLOCATE_OR(memory_allocator__, nbytes__, ...)              \
+  [&]() -> void* {                                                         \
+    void* et_try_allocate_result = memory_allocator__->allocate(nbytes__); \
+    if (et_try_allocate_result == nullptr && nbytes__ > 0) {               \
+      __VA_ARGS__                                                          \
+      ET_UNREACHABLE();                                                    \
+    }                                                                      \
+    return et_try_allocate_result;                                         \
+  }()
+
+/*
 #define ET_TRY_ALLOCATE_OR(memory_allocator__, nbytes__, ...) \
   static_assert(                                              \
       false,                                                  \
       "ET_TRY_ALLOCATE_OR uses statement expressions and \
       thus is not available for use with this compiler.");
+*/
 
 /**
  * The recommended alternative for statement expression-incompatible compilers
  * is to directly allocate the memory.
  * e.g. memory_allocator__->allocateInstance<type__>();
  */
+#define ET_TRY_ALLOCATE_INSTANCE_OR(memory_allocator__, type__, ...)       \
+  [&]() -> type__* {                                                       \
+    type__* et_try_allocate_result =                                       \
+        memory_allocator__->allocateInstance<type__>();                    \
+    if (et_try_allocate_result == nullptr) {                               \
+      __VA_ARGS__                                                          \
+      ET_UNREACHABLE();                                                    \
+    }                                                                      \
+    return et_try_allocate_result;                                         \
+  }()
+
+/*
 #define ET_TRY_ALLOCATE_INSTANCE_OR(memory_allocator__, type__, ...) \
   static_assert(                                                     \
       false,                                                         \
       "ET_TRY_ALLOCATE_INSTANCE_OR uses statement \
     expressions and thus is not available for use with this compiler.");
+*/
 
 /**
  * The recommended alternative for statement expression-incompatible compilers
  * is to directly use allocate the memory.
  * e.g. memory_allocator__->allocateList<type__>(nelem__);
  */
+
+#define ET_TRY_ALLOCATE_LIST_OR(memory_allocator__, type__, nelem__, ...)  \
+  [&]() -> type__* {                                                       \
+    type__* et_try_allocate_result =                                       \
+        memory_allocator__->allocateList<type__>(nelem__);                 \
+    if (et_try_allocate_result == nullptr && nelem__ > 0) {                \
+      __VA_ARGS__                                                          \
+      ET_UNREACHABLE();                                                    \
+    }                                                                      \
+    return et_try_allocate_result;                                         \
+  }()
+
+/*
 #define ET_TRY_ALLOCATE_LIST_OR(memory_allocator__, type__, nelem__, ...) \
   static_assert(                                                          \
       false,                                                              \
       "ET_TRY_ALLOCATE_LIST_OR uses statement \
     expressions and thus is not available for use with this compiler.");
+*/
+
 #endif // !ET_HAVE_GNU_STATEMENT_EXPRESSIONS
 
 /**
@@ -367,6 +408,34 @@ class MemoryAllocator {
   ET_TRY_ALLOCATE_LIST_OR(memory_allocator__, type__, nelem__, {              \
     return ::executorch::runtime::Error::MemoryAllocationFailed;              \
   })
+
+#define ET_TRY_ALLOCATE_INSTANCE_OR(memory_allocator__, type__, ...) \
+  ({                                                                 \
+    type__* et_try_allocate_result =                                 \
+        memory_allocator__->allocateInstance<type__>();              \
+    if (et_try_allocate_result == nullptr) {                         \
+      __VA_ARGS__                                                    \
+      /* The args must return. */                                    \
+      ET_UNREACHABLE();                                              \
+    }                                                                \
+    et_try_allocate_result;                                          \
+  })
+
+#define ET_TRY_ALLOCATE_INSTANCE_OR_RETURN_NULL(memory_allocator__, type__, ...)       \
+  [&]() -> type__* {                                                       \
+    type__* et_try_allocate_result =                                       \
+        memory_allocator__->allocateInstance<type__>();                    \
+    if (et_try_allocate_result == nullptr) {                               \
+      __VA_ARGS__                                                          \
+      ET_UNREACHABLE();                                                    \
+    }                                                                      \
+    return et_try_allocate_result;                                         \
+  }()
+
+
+#define ET_ALLOCATE_INSTANCE_OR_RETURN_NULL(memory_allocator__, type__)  \
+  ET_TRY_ALLOCATE_INSTANCE_OR_RETURN_NULL(memory_allocator__, type__, { return nullptr; })
+
 
 } // namespace runtime
 } // namespace executorch

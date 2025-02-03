@@ -85,7 +85,7 @@ Result<DelegateHandle*> OpenvinoBackend::init(
 
     // Allocate execution handle
     MemoryAllocator* allocator = context.get_runtime_allocator();
-    ExecutionHandle* handle = ET_ALLOCATE_INSTANCE_OR_RETURN_ERROR(allocator, ExecutionHandle);
+    ExecutionHandle* handle = ET_ALLOCATE_INSTANCE_OR_RETURN_NULL(allocator, ExecutionHandle);
     handle->compiled_model = std::make_shared<ov::CompiledModel>(compiled_model);
     handle->infer_request = infer_request;
 
