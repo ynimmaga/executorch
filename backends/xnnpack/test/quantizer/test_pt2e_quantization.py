@@ -54,7 +54,7 @@ from torch.testing._internal.common_utils import (
 
 
 class TestQuantizePT2E(PT2EQuantizationTestCase):
-    def _get_pt2e_quantized_linear(
+    def _get_linear(
         self, is_per_channel: bool = False
     ) -> torch.fx.GraphModule:
         class M(torch.nn.Module):
@@ -651,7 +651,7 @@ class TestQuantizePT2E(PT2EQuantizationTestCase):
 
     def test_fold_quantize(self) -> None:
         """Test to make sure the quantized model gets quantized weight (quantize_per_tensor op is folded)"""
-        m = self._get_pt2e_quantized_linear()
+        m = self._get_linear()
         node_occurrence = {
             # quantize op for weight node is folded
             ns.call_function(
@@ -665,7 +665,7 @@ class TestQuantizePT2E(PT2EQuantizationTestCase):
 
     def test_fold_quantize_per_channel(self) -> None:
         """Test to make sure the quantized model gets quantized weight (quantize_per_channel op is folded)"""
-        m = self._get_pt2e_quantized_linear(is_per_channel=True)
+        m = self._get_linear(is_per_channel=True)
         node_occurrence = {
             # quantize op for weight node is folded
             ns.call_function(
@@ -682,7 +682,7 @@ class TestQuantizePT2E(PT2EQuantizationTestCase):
 
     def test_save_load(self) -> None:
         """Test save/load a quantized model"""
-        m = self._get_pt2e_quantized_linear()
+        m = self._get_linear()
         example_inputs = (torch.randn(2, 2),)
         ref_res = m(*example_inputs)
 
