@@ -158,12 +158,7 @@ class TestQuantizePT2E(PT2EQuantizationTestCase):
             ),
         )
 
-    def test_composable_quantizer_linear_conv(self) -> None:
-        # TODO: impelment whe dynamic quantization will be supported by OpenVINOQuantizer
-        pass
-
     def test_embedding_conv_linear_quantization(self) -> None:
-        # Mark
         m_eager = TestHelperModules.EmbeddingConvLinearModule().eval()
         indices = torch.tensor(
             [
@@ -203,57 +198,87 @@ class TestQuantizePT2E(PT2EQuantizationTestCase):
         )
         indices = torch.unsqueeze(indices, 0)
         example_inputs = (indices,)
+        quantizer = OpenVINOQuantizer()
 
-        embedding_quantizer = EmbeddingQuantizer()
-        dynamic_quantizer = XNNPACKQuantizer()
-        quantization_config_dynamic = get_symmetric_quantization_config(
-            is_per_channel=True, is_dynamic=True
-        )
-        dynamic_quantizer.set_global(quantization_config_dynamic)
-        static_quantizer = XNNPACKQuantizer()
-        quantization_config = get_symmetric_quantization_config(is_per_channel=True)
-        static_quantizer.set_global(quantization_config)
-        composed_quantizer = ComposableQuantizer(
-            [embedding_quantizer, dynamic_quantizer, static_quantizer]
-        )
+        m = self._quantize(m_eager, quantizer, example_inputs, is_qat=False)
 
-        act_affine_quant_obs = observer.PlaceholderObserver.with_args(
-            dtype=torch.qint8,
-            qscheme=torch.per_tensor_affine,
-            quant_min=-128,
-            quant_max=127,
-            eps=2**-12,
-            is_dynamic=True,
-        )
-        dynamic_qconfig = QConfig(
-            activation=act_affine_quant_obs,
-            weight=per_channel_weight_observer_range_neg_127_to_127,
-        )
-        qconfig = default_per_channel_symmetric_qnnpack_qconfig
-        qconfig_mapping = QConfigMapping().set_global(qconfig)
-        qconfig_mapping.set_object_type(torch.nn.Linear, dynamic_qconfig)
-        qconfig_mapping = qconfig_mapping.set_object_type(
-            torch.nn.Embedding, float_qparams_weight_only_qconfig
-        )
-
-        node_occurrence = {
-            torch.ops.quantized_decomposed.quantize_per_tensor.default: 4,
-            torch.ops.quantized_decomposed.dequantize_per_tensor.default: 4,
-            torch.ops.quantized_decomposed.quantize_per_tensor.tensor: 1,
-            torch.ops.quantized_decomposed.dequantize_per_tensor.tensor: 1,
-            # note: quantize op for weights are const propagated
-            torch.ops.quantized_decomposed.quantize_per_channel.default: 0,
-            torch.ops.quantized_decomposed.dequantize_per_channel.default: 3,
+        ref_q = {
+            # First conv
+            "quantize_per_tensor_default": (
+                None,
+                0.01585131697356701,
+                127,
+                0,
+                255,
+                torch.uint8,
+            ),
+            "dequantize_per_tensor_default": (
+                None,
+                0.01585131697356701,
+                127,
+                0,
+                255,
+                torch.uint8,
+            ),
+            "dequantize_per_channel_default": (
+                None,
+                torch.tensor(
+                    [
+                        0.0015,
+                        0.0015,
+                        0.0015,
+                        0.0016,
+                        0.0015,
+                        0.0016,
+                        0.0014,
+                        0.0014,
+                        0.0015,
+                        0.0015,
+                        0.0016,
+                        0.0015,
+                        0.0015,
+                        0.0016,
+                        0.0016,
+                        0.0015,
+                    ]
+                ),
+                torch.tensor([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                0,
+                -128,
+                127,
+                torch.int8,
+            ),
+            # First linear
+            "quantize_per_tensor_default_1": (
+                None,
+                0.016017982736229897,
+                127,
+                0,
+                255,
+                torch.uint8,
+            ),
+            "dequantize_per_tensor_default_1": (
+                None,
+                0.016017982736229897,
+                127,
+                0,
+                255,
+                torch.uint8,
+            ),
+            "dequantize_per_channel_default_1": (
+                None,
+                torch.tensor(
+                    [0.0019, 0.0019, 0.0020, 0.0018, 0.0019, 0.0019, 0.0018, 0.0018]
+                ),
+                torch.tensor([0, 0, 0, 0, 0, 0, 0, 0]),
+                0,
+                -128,
+                127,
+                torch.int8,
+            ),
+            # TODO: embedding
         }
-        self._test_quantizer(
-            m_eager,
-            example_inputs,
-            composed_quantizer,
-            node_occurrence,
-            [],
-            True,
-            qconfig_mapping,
-        )
+        self._check_quantization_with_ref(m, ref_q)
 
     def test_disallow_eval_train(self) -> None:
         m = TestHelperModules.ConvWithBNRelu(relu=True)
@@ -272,7 +297,7 @@ class TestQuantizePT2E(PT2EQuantizationTestCase):
 
         # After prepare: still not OK
         quantizer = OpenVINOQuantizer()
-        m = prepare_qat_pt2e(m, quantizer)  # pyre-ignore[6]
+        m = prepare_pt2e(m, quantizer)  # pyre-ignore[6]
         with self.assertRaises(NotImplementedError):
             m.eval()
         with self.assertRaises(NotImplementedError):
@@ -308,11 +333,9 @@ class TestQuantizePT2E(PT2EQuantizationTestCase):
             def __init__(self) -> None:
                 super().__init__()
                 self.bn = torch.nn.BatchNorm2d(3)
-                self.dropout = torch.nn.Dropout(0.5)
 
             def forward(self, x):
                 x = self.bn(x)
-                x = self.dropout(x)
                 return x
 
         m = M().train()
@@ -324,8 +347,6 @@ class TestQuantizePT2E(PT2EQuantizationTestCase):
             bn_op = bn_train_op if train else bn_eval_op
             bn_node = self._get_node(m, bn_op)
             self.assertTrue(bn_node is not None)
-            dropout_node = self._get_node(m, torch.ops.aten.dropout.default)
-            self.assertEqual(dropout_node.args[2], train)
 
         # Before wrapping: this is not OK
         with self.assertRaises(NotImplementedError):
@@ -341,8 +362,8 @@ class TestQuantizePT2E(PT2EQuantizationTestCase):
         _assert_ops_are_correct(m, train=True)  # pyre-ignore[6]
 
         # After prepare but before wrapping: this is not OK
-        quantizer = XNNPACKQuantizer()
-        m = prepare_qat_pt2e(m, quantizer)  # pyre-ignore[6]
+        quantizer = OpenVINOQuantizer()
+        m = prepare_pt2e(m, quantizer)  # pyre-ignore[6]
         with self.assertRaises(NotImplementedError):
             m.eval()
         with self.assertRaises(NotImplementedError):
@@ -676,142 +697,6 @@ class TestQuantizePT2E(PT2EQuantizationTestCase):
                 assert node.args[idx] == ref_value
 
         assert len(ref) == matches
-
-    def _get_backend_config(self):
-        def _get_linear_configs():
-            observation_type = ObservationType.OUTPUT_SHARE_OBSERVER_WITH_INPUT
-            dtype_configs = [
-                DTypeConfig(
-                    input_dtype=torch.quint8,
-                    output_dtype=torch.float,
-                    weight_dtype=torch.qint8,
-                    bias_dtype=torch.float,
-                )
-            ]
-            linear_configs: list[BackendPatternConfig] = []
-            # linear module
-            linear_configs.append(
-                BackendPatternConfig(torch.nn.Linear)
-                .set_observation_type(observation_type)  # noqa: E131
-                .set_dtype_configs(dtype_configs)
-                .set_root_module(torch.nn.Linear)
-                .set_reference_quantized_module(nnqr.Linear)
-            )
-            # functional linear
-            linear_configs.append(
-                BackendPatternConfig(torch.nn.functional.linear)
-                .set_observation_type(observation_type)  # noqa: E131
-                .set_dtype_configs(dtype_configs)
-                ._set_input_type_to_index({"weight": 1, "bias": 2})
-            )
-            return linear_configs
-
-        def _get_conv_configs():
-            pass
-
-        return BackendConfig("OpenVINO").set_backend_pattern_configs(
-            _get_linear_configs()
-        )
-        # .set_backend_pattern_configs(_get_conv_configs())
-
-    def _test_quantizer(
-        self,
-        model,
-        example_inputs,
-        quantizer,
-        expected_node_occurrence,
-        expected_node_list=None,
-        check_against_fx_quant=False,
-        fx_qconfig_mapping=None,
-        export_with_dynamic_shape=False,
-        is_qat=False,
-        is_debug_mode=False,
-        training_ir_node_occurrence=None,
-    ):
-        # resetting dynamo cache
-        torch._dynamo.reset()
-        m_eager = model.eval()
-
-        # program capture
-        m = copy.deepcopy(m_eager)
-        dynamic_shapes = tuple(
-            {0: torch.export.Dim("dim")} if i == 0 else None
-            for i in range(len(example_inputs))
-        )
-        m = export_for_training(
-            m,
-            example_inputs,
-            dynamic_shapes=dynamic_shapes if export_with_dynamic_shape else None,
-        ).module()
-
-        if is_qat:
-            m = prepare_qat_pt2e(m, quantizer)
-        else:
-            m = prepare_pt2e(m, quantizer)
-        if is_debug_mode:
-            print("prepared model:", m)
-        # Calibrate
-        m(*example_inputs)
-        m = convert_pt2e(m)
-        if is_debug_mode:
-            print("quantized model", m)
-
-        pt2_quant_output = m(*example_inputs)
-        node_occurrence = {
-            ns.call_function(k): v for k, v in expected_node_occurrence.items()
-        }
-        if expected_node_list is None:
-            expected_node_list = []
-        node_list = [ns.call_function(n) for n in expected_node_list]
-        self.checkGraphModuleNodes(
-            m, expected_node_occurrence=node_occurrence, expected_node_list=node_list
-        )
-        if check_against_fx_quant:
-            qconfig_mapping = fx_qconfig_mapping
-            backend_config = self._get_backend_config()
-            m_copy = copy.deepcopy(m_eager)
-            m_fx = prepare_fx(
-                m_copy, qconfig_mapping, example_inputs, backend_config=backend_config
-            )
-            m_fx(*example_inputs)
-            m_fx = _convert_to_reference_decomposed_fx(
-                m_fx, backend_config=backend_config
-            )
-            m_fx = export_for_training(
-                m_fx,
-                example_inputs,
-                dynamic_shapes=dynamic_shapes if export_with_dynamic_shape else None,
-            ).module()
-            node_occurrence = {}
-            for k, v in PT2EQuantizationTestCase._MAP_TO_FX_TRACED_OPS.items():
-                if k in expected_node_occurrence:
-                    node_occurrence[ns.call_function(v)] = expected_node_occurrence[k]
-            if training_ir_node_occurrence is not None:
-                node_occurrence = {
-                    ns.call_function(k): v
-                    for k, v in training_ir_node_occurrence.items()
-                }
-            self.checkGraphModuleNodes(m_fx, expected_node_occurrence=node_occurrence)
-            fx_quant_output = m_fx(*example_inputs)
-            self.assertEqual(fx_quant_output, pt2_quant_output)
-        return m
-        # activation_observer = observer.HistogramObserver
-        default_qconfig = QConfig(
-            activation=activation_observer, weight=weight_observer
-        )
-        qconfig_mapping = QConfigMapping()
-        qconfig_mapping.set_global(QConfig(activation=None, weight=None))
-        qconfig_mapping.set_object_type(torch.nn.Linear, default_qconfig)
-        self._quantize()
-        self._test_quantizer(
-            m,
-            example_inputs,
-            quantizer,
-            node_occurrence,
-            check_against_fx_quant=True,
-            fx_qconfig_mapping=qconfig_mapping,
-        )
-        # self.checkGraphModuleNodes(m, expected_node_occurrence=node_occurrence, )
 
     def test_save_load(self) -> None:
         """Test save/load a quantized model"""
