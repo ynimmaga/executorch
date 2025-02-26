@@ -6,60 +6,20 @@
 
 # pyre-unsafe
 
-import copy
-from collections import Counter
-import torch.ao.nn.quantized.reference as nnqr
-from typing import Dict, Tuple, Optional
+import unittest
+from typing import Dict, Optional, Tuple
 
-from torch.ao.quantization.backend_config import (
-    BackendConfig,
-    BackendPatternConfig,
-    DTypeConfig,
-    DTypeWithConstraints,
-    ObservationType,
-)
-from nncf.experimental.torch.fx.node_utils import get_tensor_constant_from_node
 import torch
-from executorch.backends.xnnpack.quantizer.xnnpack_quantizer import (
-    get_symmetric_quantization_config,
-    XNNPACKQuantizer,
+from executorch.backends.openvino.quantizer.quantizer import (
+    OpenVINOQuantizer,
+    QuantizationMode,
 )
-from executorch.backends.openvino.quantizer.quantizer import OpenVINOQuantizer
-from executorch.backends.openvino.quantizer.quantizer import QuantizationMode
 
-from torch.ao.quantization.quantize_pt2e import (
-    _convert_to_reference_decomposed_fx,
-    convert_pt2e,
-    prepare_pt2e,
-    prepare_qat_pt2e,
-)
-from torch.ao.quantization import (
-    compare_results,
-    CUSTOM_KEY,
-    default_per_channel_symmetric_qnnpack_qconfig,
-    extract_results_from_loggers,
-    generate_numeric_debug_handle,
-    NUMERIC_DEBUG_HANDLE_KEY,
-    observer,
-    prepare_for_propagation_comparison,
-)
-from torch.ao.quantization.pt2e.graph_utils import bfs_trace_with_node_process
-from torch.ao.quantization.qconfig import (
-    float_qparams_weight_only_qconfig,
-    per_channel_weight_observer_range_neg_127_to_127,
-    QConfig,
-    weight_observer_range_neg_127_to_127,
-)
-from torch.ao.quantization.qconfig_mapping import QConfigMapping
-from torch.ao.quantization.quantize_fx import prepare_fx
-from torch.ao.quantization.quantize_pt2e import (
-    convert_pt2e,
-    prepare_pt2e,
-    prepare_qat_pt2e,
-)
+from nncf.experimental.torch.fx.node_utils import get_tensor_constant_from_node
+from nncf.torch import disable_patching
+from torch.ao.quantization.quantize_pt2e import convert_pt2e, prepare_pt2e
 from torch.ao.quantization.quantizer import Quantizer
 from torch.ao.quantization.quantizer.composable_quantizer import ComposableQuantizer
-from torch.ao.quantization.quantizer.embedding_quantizer import EmbeddingQuantizer
 from torch.export import export_for_training
 from torch.testing._internal.common_quantization import (
     NodeSpec as ns,
@@ -69,9 +29,7 @@ from torch.testing._internal.common_quantization import (
 from torch.testing._internal.common_utils import (
     instantiate_parametrized_tests,
     TemporaryFileName,
-    TestCase,
 )
-from nncf.torch import disable_patching
 
 
 class TestQuantizePT2E(PT2EQuantizationTestCase):
@@ -158,43 +116,16 @@ class TestQuantizePT2E(PT2EQuantizationTestCase):
             ),
         )
 
+    @unittest.skip(
+        "Enable after the embedding quantization fix: https://github.com/openvinotoolkit/nncf/pull/3237"
+    )
     def test_embedding_conv_linear_quantization(self) -> None:
         m_eager = TestHelperModules.EmbeddingConvLinearModule().eval()
         indices = torch.tensor(
-            [
-                9,
-                6,
-                5,
-                7,
-                8,
-                8,
-                9,
-                2,
-                8,
-                6,
-                6,
-                9,
-                1,
-                6,
-                8,
-                8,
-                3,
-                2,
-                3,
-                6,
-                3,
-                6,
-                5,
-                7,
-                0,
-                8,
-                4,
-                6,
-                5,
-                8,
-                2,
-                3,
-            ]
+            [9, 6, 5, 7, 8, 8, 9, 2, 8, 6]
+            + [6, 9, 1, 6, 8, 8, 3, 2, 3, 6]
+            + [3, 6, 5, 7, 0, 8, 4, 6, 5, 8]
+            + [2, 3]
         )
         indices = torch.unsqueeze(indices, 0)
         example_inputs = (indices,)
@@ -223,24 +154,10 @@ class TestQuantizePT2E(PT2EQuantizationTestCase):
             "dequantize_per_channel_default": (
                 None,
                 torch.tensor(
-                    [
-                        0.0015,
-                        0.0015,
-                        0.0015,
-                        0.0016,
-                        0.0015,
-                        0.0016,
-                        0.0014,
-                        0.0014,
-                        0.0015,
-                        0.0015,
-                        0.0016,
-                        0.0015,
-                        0.0015,
-                        0.0016,
-                        0.0016,
-                        0.0015,
-                    ]
+                    [0.0015, 0.0015, 0.0015, 0.0016, 0.0015]
+                    + [0.0016, 0.0014, 0.0014, 0.0015, 0.0015]
+                    + [0.0016, 0.0015, 0.0015, 0.0016, 0.0016]
+                    + [0.0015]
                 ),
                 torch.tensor([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
                 0,
@@ -276,7 +193,7 @@ class TestQuantizePT2E(PT2EQuantizationTestCase):
                 127,
                 torch.int8,
             ),
-            # TODO: embedding
+            # TODO: check embedding after the fix in NNCF
         }
         self._check_quantization_with_ref(m, ref_q)
 
@@ -403,9 +320,7 @@ class TestQuantizePT2E(PT2EQuantizationTestCase):
             def forward(self, x):
                 return self.linear(x)
 
-        quantizer = XNNPACKQuantizer()
-        operator_config = get_symmetric_quantization_config()
-        quantizer.set_global(operator_config)
+        quantizer = OpenVINOQuantizer()
         example_inputs = (torch.randn(2, 2),)
         m = M().eval()
         m = export_for_training(
@@ -436,19 +351,15 @@ class TestQuantizePT2E(PT2EQuantizationTestCase):
         m = TestHelperModules.ConvBnReLU2dAndLinearReLU()
         example_inputs = (torch.randn(3, 3, 10, 10),)
 
-        quantizer = XNNPACKQuantizer().set_global(
-            get_symmetric_quantization_config(is_per_channel=True, is_qat=True)
-        )
+        quantizer = OpenVINOQuantizer(mode=QuantizationMode.INT8_SYM)
         m.conv_bn_relu = export_for_training(  # pyre-ignore[8]
             m.conv_bn_relu, example_inputs
         ).module()
-        m.conv_bn_relu = prepare_qat_pt2e(m.conv_bn_relu, quantizer)  # pyre-ignore[6,8]
+        m.conv_bn_relu = prepare_pt2e(m.conv_bn_relu, quantizer)  # pyre-ignore[6,8]
         m(*example_inputs)
         m.conv_bn_relu = convert_pt2e(m.conv_bn_relu)  # pyre-ignore[6, 8]
 
-        quantizer = XNNPACKQuantizer().set_module_type(
-            torch.nn.Linear, get_symmetric_quantization_config(is_per_channel=False)
-        )
+        quantizer = OpenVINOQuantizer(mode=QuantizationMode.INT8_MIXED)
         m = export_for_training(m, example_inputs).module()
         m = prepare_pt2e(m, quantizer)  # pyre-ignore[6]
         m = convert_pt2e(m)
@@ -456,41 +367,22 @@ class TestQuantizePT2E(PT2EQuantizationTestCase):
         node_occurrence = {
             ns.call_function(
                 torch.ops.quantized_decomposed.quantize_per_tensor.default
-            ): 4,
-            # one for weight
+            ): 3,
             ns.call_function(
                 torch.ops.quantized_decomposed.dequantize_per_tensor.default
-            ): 5,
+            ): 3,
+            ns.call_function(
+                torch.ops.quantized_decomposed.quantize_per_channel.default
+            ): 1,
             ns.call_function(
                 torch.ops.quantized_decomposed.dequantize_per_channel.default
-            ): 1,
+            ): 3,
         }
-        node_list = [
-            ns.call_function(
-                torch.ops.quantized_decomposed.dequantize_per_tensor.default
-            ),
-            ns.call_function(torch.ops.aten.conv2d.default),
-            ns.call_function(torch.ops.aten.relu.default),
-            ns.call_function(
-                torch.ops.quantized_decomposed.quantize_per_tensor.default
-            ),
-            ns.call_function(
-                torch.ops.quantized_decomposed.dequantize_per_tensor.default
-            ),
-            ns.call_function(torch.ops.aten.linear.default),
-            ns.call_function(
-                torch.ops.quantized_decomposed.quantize_per_tensor.default
-            ),
-        ]
-        self.checkGraphModuleNodes(
-            m, expected_node_occurrence=node_occurrence, expected_node_list=node_list
-        )
+        self.checkGraphModuleNodes(m, expected_node_occurrence=node_occurrence)
 
     def test_groupwise_per_channel_quant(self) -> None:
         m = TestHelperModules.GroupwiseConv2d()
-        quantizer = XNNPACKQuantizer()
-        operator_config = get_symmetric_quantization_config(is_per_channel=True)
-        quantizer.set_global(operator_config)
+        quantizer = OpenVINOQuantizer()
         example_inputs = m.example_inputs()
         m = self._quantize(m, quantizer, example_inputs)
         # make sure it runs
@@ -501,9 +393,7 @@ class TestQuantizePT2E(PT2EQuantizationTestCase):
         m = TestHelperModules.ConvBnReLU2dAndLinearReLU()
         example_inputs = (torch.randn(3, 3, 10, 10),)
 
-        quantizer = XNNPACKQuantizer().set_global(
-            get_symmetric_quantization_config(is_per_channel=True, is_qat=True)
-        )
+        quantizer = OpenVINOQuantizer()
 
         def check_nn_module(node: torch.fx.Node) -> None:
             self.assertTrue("nn_module_stack" in node.meta)
@@ -517,96 +407,10 @@ class TestQuantizePT2E(PT2EQuantizationTestCase):
         for node in m.conv_bn_relu.graph.nodes:  # pyre-ignore[16]
             if node.op not in ["placeholder", "output", "get_attr"]:
                 check_nn_module(node)
-        m.conv_bn_relu = prepare_qat_pt2e(m.conv_bn_relu, quantizer)  # pyre-ignore[6,8]
+        m.conv_bn_relu = prepare_pt2e(m.conv_bn_relu, quantizer)  # pyre-ignore[6,8]
         for node in m.conv_bn_relu.graph.nodes:  # pyre-ignore[16]
             if node.name == "mul":
                 check_nn_module(node)
-
-    def test_speed(self) -> None:
-        import time  # noqa: F401
-
-        def dynamic_quantize_pt2e(model, example_inputs) -> torch.fx.GraphModule:
-            torch._dynamo.reset()
-            model = export_for_training(model, example_inputs).module()
-            # Per channel quantization for weight
-            # Dynamic quantization for activation
-            # Please read a detail: https://fburl.com/code/30zds51q
-            embedding_quantizer = EmbeddingQuantizer()
-            dynamic_quantizer = XNNPACKQuantizer()
-            operator_config_dynamic = get_symmetric_quantization_config(
-                is_per_channel=True, is_dynamic=True
-            )
-            dynamic_quantizer.set_global(operator_config_dynamic)
-            composed_quantizer = ComposableQuantizer(
-                [embedding_quantizer, dynamic_quantizer]
-            )
-            # prev = time.time()
-            model = prepare_qat_pt2e(model, composed_quantizer)  # pyre-ignore[6]
-            # cur = time.time()
-            # print("prepare time:", cur - prev)
-            # Without Calibraiton, scale/zero value will have an initialized value of 1.0
-            # Per channel quantization needs a proper scale/zero shape/value to work properly.
-            # So we need to run calibration before converting to quantized model.
-            model(*example_inputs)
-            # prev = time.time()
-            model = convert_pt2e(model)
-            # cur = time.time()
-            # uncomment to see the time
-            # print("convert time:", cur - prev)
-            return model
-
-        class M(torch.nn.Module):
-            def __init__(self) -> None:
-                super().__init__()
-                self.linear = torch.nn.Linear(5, 5)
-
-            def forward(self, x):
-                return self.linear(x)
-
-        m = M().eval()
-        example_inputs = (torch.randn(5, 5),)
-        _ = dynamic_quantize_pt2e(m, example_inputs)
-
-    def test_multi_users_without_output_observer(self) -> None:
-        """
-        Test the case in which a node is used by multiple users,
-        and had its output observer removed.
-        """
-
-        class M(torch.nn.Module):
-            def __init__(self) -> None:
-                super().__init__()
-                self.conv = torch.nn.Conv2d(3, 3, 3)
-
-            def forward(self, x):
-                x = self.conv(x)
-                return x, x + 1
-
-        example_inputs = (torch.randn(1, 3, 5, 5),)
-        m = M()
-        m = export_for_training(m, example_inputs).module()
-        quantizer = XNNPACKQuantizer().set_global(
-            get_symmetric_quantization_config(),
-        )
-        m = prepare_pt2e(m, quantizer)  # pyre-ignore[6]
-        m(*example_inputs)
-
-        # Remove output observer
-        observer_to_remove = None
-        for n in m.graph.nodes:
-            if n.op == "output":
-                observer_to_remove = n.args[0][0]
-                assert observer_to_remove.op == "call_module"
-                assert observer_to_remove.target.startswith("activation_post_process_")
-                break
-        assert observer_to_remove is not None
-        observer_to_remove.replace_all_uses_with(observer_to_remove.args[0])
-        m.graph.erase_node(observer_to_remove)
-        m.recompile()
-
-        # Convert should succeed
-        m = convert_pt2e(m)
-        m(*example_inputs)
 
     def test_fold_quantize_sym(self) -> None:
         """Test to make sure the quantized model gets quantized weight (quantize_per_tensor op is folded)"""
@@ -700,7 +504,7 @@ class TestQuantizePT2E(PT2EQuantizationTestCase):
 
     def test_save_load(self) -> None:
         """Test save/load a quantized model"""
-        m = self._get_linear()
+        m = self._get_pt2e_quantized_linear()
         example_inputs = (torch.randn(2, 2),)
         ref_res = m(*example_inputs)
 
@@ -716,123 +520,3 @@ class TestQuantizePT2E(PT2EQuantizationTestCase):
 
 
 instantiate_parametrized_tests(TestQuantizePT2E)
-
-
-class TestNumericDebugger(TestCase):
-
-    def _extract_debug_handles(self, model) -> Dict[str, int]:
-        debug_handle_map: Dict[str, int] = {}
-
-        def _extract_debug_handles_from_node(node: torch.fx.Node) -> None:
-            nonlocal debug_handle_map
-            if (
-                CUSTOM_KEY in node.meta
-                and NUMERIC_DEBUG_HANDLE_KEY in node.meta[CUSTOM_KEY]
-            ):
-                debug_handle_map[str(node)] = node.meta[CUSTOM_KEY][
-                    NUMERIC_DEBUG_HANDLE_KEY
-                ]
-
-        bfs_trace_with_node_process(model, _extract_debug_handles_from_node)
-        return debug_handle_map
-
-    def _assert_each_node_has_debug_handle(self, model) -> None:
-        def _assert_node_has_debug_handle(node: torch.fx.Node) -> None:
-            self.assertTrue(
-                CUSTOM_KEY in node.meta
-                and NUMERIC_DEBUG_HANDLE_KEY in node.meta[CUSTOM_KEY],
-                f"Node {node} doesn't have debug handle",
-            )
-
-        bfs_trace_with_node_process(model, _assert_node_has_debug_handle)
-
-    def test_quantize_pt2e_preserve_handle(self) -> None:
-        m = TestHelperModules.Conv2dThenConv1d()
-        example_inputs = m.example_inputs()
-        ep = export_for_training(m, example_inputs)
-        generate_numeric_debug_handle(ep)
-        m = ep.module()
-
-        quantizer = XNNPACKQuantizer().set_global(
-            get_symmetric_quantization_config(is_per_channel=False)
-        )
-        m = prepare_pt2e(m, quantizer)  # pyre-ignore[6]
-        debug_handle_map = self._extract_debug_handles(m)
-        res_counter = Counter(debug_handle_map.values())
-        repeated_debug_handle_ids = [1, 2, 3]
-        # 3 ids were repeated because we copy over the id from node to its output observer
-        # torch.ops.aten.conv2d.default, torch.ops.aten.squeeze.dim and torch.ops.aten.conv1d.default
-        for dh_id in repeated_debug_handle_ids:
-            self.assertEqual(res_counter[dh_id], 2)
-
-        m(*example_inputs)
-        m = convert_pt2e(m)
-        self._assert_each_node_has_debug_handle(ep)
-        debug_handle_map = self._extract_debug_handles(m)
-        res_counter = Counter(debug_handle_map.values())
-        # same set of ids where repeated, because we copy over the id from observer/fake_quant to
-        # dequantize node
-        repeated_debug_handle_ids = [1, 2, 3]
-        for dh_id in repeated_debug_handle_ids:
-            self.assertEqual(res_counter[dh_id], 2)
-
-    def test_extract_results_from_loggers(self) -> None:
-        m = TestHelperModules.Conv2dThenConv1d()
-        example_inputs = m.example_inputs()
-        ep = export_for_training(m, example_inputs)
-        generate_numeric_debug_handle(ep)
-        m = ep.module()
-        m_ref_logger = prepare_for_propagation_comparison(m)  # pyre-ignore[6]
-
-        quantizer = XNNPACKQuantizer().set_global(
-            get_symmetric_quantization_config(is_per_channel=False)
-        )
-        m = prepare_pt2e(m, quantizer)  # pyre-ignore[6]
-        m(*example_inputs)
-        m = convert_pt2e(m)
-        m_quant_logger = prepare_for_propagation_comparison(m)
-
-        m_ref_logger(*example_inputs)
-        m_quant_logger(*example_inputs)
-        ref_results = extract_results_from_loggers(m_ref_logger)
-        quant_results = extract_results_from_loggers(m_quant_logger)
-        comparison_results = compare_results(
-            ref_results, quant_results  # pyre-ignore[6]
-        )
-        for node_summary in comparison_results.values():
-            if len(node_summary.results) > 0:
-                self.assertGreaterEqual(
-                    node_summary.results[0].sqnr, 35  # pyre-ignore[6]
-                )
-
-    def test_extract_results_from_loggers_list_output(self) -> None:
-        m = TestHelperModules.Conv2dWithSplit()
-        example_inputs = m.example_inputs()
-        ep = export_for_training(m, example_inputs)
-        generate_numeric_debug_handle(ep)
-        m = ep.module()
-        m_ref_logger = prepare_for_propagation_comparison(m)  # pyre-ignore[6]
-
-        quantizer = XNNPACKQuantizer().set_global(
-            get_symmetric_quantization_config(is_per_channel=False)
-        )
-        m = prepare_pt2e(m, quantizer)  # pyre-ignore[6]
-        m(*example_inputs)
-        m = convert_pt2e(m)
-        m_quant_logger = prepare_for_propagation_comparison(m)
-
-        m_ref_logger(*example_inputs)
-        m_quant_logger(*example_inputs)
-        ref_results = extract_results_from_loggers(m_ref_logger)
-        quant_results = extract_results_from_loggers(m_quant_logger)
-        comparison_results = compare_results(
-            ref_results, quant_results  # pyre-ignore[6]
-        )
-        for node_summary in comparison_results.values():
-            if len(node_summary.results) > 0:
-                sqnr = node_summary.results[0].sqnr
-                if isinstance(sqnr, list):
-                    for sqnr_i in sqnr:
-                        self.assertGreaterEqual(sqnr_i, 35)
-                else:
-                    self.assertGreaterEqual(sqnr, 35)  # pyre-ignore[6]

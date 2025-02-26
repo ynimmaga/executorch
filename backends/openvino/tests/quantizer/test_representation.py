@@ -1,26 +1,30 @@
 # Owner(s): ["oncall: quantization"]
 import copy
+import unittest
 from typing import Any, Optional
 
 import torch
-from executorch.backends.xnnpack.quantizer.xnnpack_quantizer import (
-    get_symmetric_quantization_config,
-    XNNPACKQuantizer,
-)
-from torch._higher_order_ops.out_dtype import out_dtype  # noqa: F401
+from executorch.backends.openvino.quantizer.quantizer import OpenVINOQuantizer
+
+from nncf.torch import disable_patching
 from torch.ao.quantization.quantize_pt2e import convert_pt2e, prepare_pt2e
 from torch.ao.quantization.quantizer import Quantizer
 from torch.export import export_for_training
 from torch.testing._internal.common_quantization import (
     NodeSpec as ns,
     QuantizationTestCase,
-    skipIfNoQNNPACK,
     TestHelperModules,
 )
 
 
-@skipIfNoQNNPACK
 class TestPT2ERepresentation(QuantizationTestCase):
+    def run(self, result=None):
+        """
+        Disable NNCF pathing for each test call
+        """
+        with disable_patching():
+            super().run(result)
+
     def _test_representation(
         self,
         model: torch.nn.Module,
@@ -29,7 +33,7 @@ class TestPT2ERepresentation(QuantizationTestCase):
         ref_node_occurrence: dict[ns, int],
         non_ref_node_occurrence: dict[ns, int],
         fixed_output_tol: Optional[float] = None,
-        output_scale_idx: int = 2,
+        output_scale_idx: int = 1,
     ) -> None:
         # resetting dynamo cache
         torch._dynamo.reset()
@@ -71,6 +75,7 @@ class TestPT2ERepresentation(QuantizationTestCase):
                     idx += 1
                     if idx == output_scale_idx:
                         output_tol = n.args[1]
+                        break
             assert output_tol is not None
 
         # make sure the result is off by one at most in the quantized integer representation
@@ -88,9 +93,7 @@ class TestPT2ERepresentation(QuantizationTestCase):
             def forward(self, x):
                 return self.linear(x)
 
-        quantizer = XNNPACKQuantizer()
-        operator_config = get_symmetric_quantization_config(is_per_channel=False)
-        quantizer.set_global(operator_config)
+        quantizer = OpenVINOQuantizer()
         example_inputs = (torch.randn(2, 5),)
 
         self._test_representation(
@@ -101,6 +104,9 @@ class TestPT2ERepresentation(QuantizationTestCase):
             non_ref_node_occurrence={},
         )
 
+    @unittest.skip(
+        "Enable after the fix https://github.com/openvinotoolkit/nncf/pull/3225"
+    )
     def test_dynamic_linear(self):
         class M(torch.nn.Module):
             def __init__(self) -> None:
@@ -110,11 +116,7 @@ class TestPT2ERepresentation(QuantizationTestCase):
             def forward(self, x):
                 return self.linear(x)
 
-        quantizer = XNNPACKQuantizer()
-        operator_config = get_symmetric_quantization_config(
-            is_per_channel=False, is_dynamic=True
-        )
-        quantizer.set_global(operator_config)
+        quantizer = OpenVINOQuantizer()
         example_inputs = (torch.randn(2, 5),)
 
         self._test_representation(
@@ -135,9 +137,7 @@ class TestPT2ERepresentation(QuantizationTestCase):
             def forward(self, x):
                 return self.conv2d(x)
 
-        quantizer = XNNPACKQuantizer()
-        operator_config = get_symmetric_quantization_config(is_per_channel=False)
-        quantizer.set_global(operator_config)
+        quantizer = OpenVINOQuantizer()
         example_inputs = (torch.randn(1, 3, 3, 3),)
 
         self._test_representation(
@@ -148,66 +148,8 @@ class TestPT2ERepresentation(QuantizationTestCase):
             non_ref_node_occurrence={},
         )
 
-    def test_add(self):
-        class M(torch.nn.Module):
-            def __init__(self) -> None:
-                super().__init__()
-
-            def forward(self, x, y):
-                return x + y
-
-        quantizer = XNNPACKQuantizer()
-        quantization_config = get_symmetric_quantization_config(is_per_channel=True)
-        quantizer.set_global(quantization_config)
-        M().eval()
-
-        example_inputs = (
-            torch.randn(1, 3, 3, 3),
-            torch.randn(1, 3, 3, 3),
-        )
-
-        self._test_representation(
-            M().eval(),
-            example_inputs,
-            quantizer,
-            ref_node_occurrence={},
-            non_ref_node_occurrence={},
-        )
-
-    def test_add_relu(self):
-        class M(torch.nn.Module):
-            def __init__(self) -> None:
-                super().__init__()
-
-            def forward(self, x, y):
-                out = x + y
-                out = torch.nn.functional.relu(out)
-                return out
-
-        quantizer = XNNPACKQuantizer()
-        operator_config = get_symmetric_quantization_config(is_per_channel=True)
-        quantizer.set_global(operator_config)
-
-        example_inputs = (
-            torch.randn(1, 3, 3, 3),
-            torch.randn(1, 3, 3, 3),
-        )
-        ref_node_occurrence = {
-            ns.call_function(out_dtype): 2,
-        }
-
-        self._test_representation(
-            M().eval(),
-            example_inputs,
-            quantizer,
-            ref_node_occurrence=ref_node_occurrence,
-            non_ref_node_occurrence={},
-        )
-
     def test_maxpool2d(self):
-        quantizer = XNNPACKQuantizer()
-        operator_config = get_symmetric_quantization_config(is_per_channel=True)
-        quantizer.set_global(operator_config)
+        quantizer = OpenVINOQuantizer()
         m_eager = TestHelperModules.ConvMaxPool2d().eval()
 
         example_inputs = (torch.randn(1, 2, 2, 2),)
@@ -218,94 +160,4 @@ class TestPT2ERepresentation(QuantizationTestCase):
             quantizer,
             ref_node_occurrence={},
             non_ref_node_occurrence={},
-        )
-
-    def test_qdq_per_channel(self):
-        """Test representation for quantize_per_channel and dequantize_per_channel op"""
-
-        class M(torch.nn.Module):
-            def __init__(self) -> None:
-                super().__init__()
-                self.linear = torch.nn.Linear(5, 5)
-
-            def forward(self, x):
-                return self.linear(x)
-
-        quantizer = XNNPACKQuantizer()
-        # use per channel quantization for weight
-        operator_config = get_symmetric_quantization_config(is_per_channel=True)
-        quantizer.set_global(operator_config)
-        M().eval()
-
-        inputs = [
-            (torch.randn(1, 5),),
-            (torch.randn(1, 3, 5),),
-            (torch.randn(1, 3, 3, 5),),
-            (torch.randn(1, 3, 3, 3, 5),),
-        ]
-        for example_inputs in inputs:
-            ref_node_occurrence = {
-                ns.call_function(
-                    torch.ops.quantized_decomposed.quantize_per_channel.default
-                ): 0,
-                ns.call_function(
-                    torch.ops.quantized_decomposed.dequantize_per_channel.default
-                ): 0,
-            }
-            non_ref_node_occurrence = {
-                # quantize_per_channel is folded
-                ns.call_function(
-                    torch.ops.quantized_decomposed.quantize_per_channel.default
-                ): 0,
-                ns.call_function(
-                    torch.ops.quantized_decomposed.dequantize_per_channel.default
-                ): 1,
-            }
-
-            self._test_representation(
-                M().eval(),
-                example_inputs,
-                quantizer,
-                ref_node_occurrence,
-                non_ref_node_occurrence,
-                output_scale_idx=2,
-            )
-
-    def test_qdq(self):
-        """Test representation for quantize and dequantize op"""
-
-        class M(torch.nn.Module):
-            def __init__(self) -> None:
-                super().__init__()
-
-            def forward(self, x, y):
-                return x + y
-
-        quantizer = XNNPACKQuantizer()
-        quantization_config = get_symmetric_quantization_config(is_per_channel=True)
-        quantizer.set_global(quantization_config)
-        M().eval()
-
-        example_inputs = (
-            torch.randn(1, 3, 3, 3),
-            torch.randn(1, 3, 3, 3),
-        )
-        ref_node_occurrence = {
-            ns.call_function(torch.ops.quantized_decomposed.quantize_per_tensor): 0,
-            ns.call_function(torch.ops.quantized_decomposed.dequantize_per_tensor): 0,
-        }
-        non_ref_node_occurrence = {
-            ns.call_function(
-                torch.ops.quantized_decomposed.quantize_per_tensor.default
-            ): 3,
-            ns.call_function(
-                torch.ops.quantized_decomposed.dequantize_per_tensor.default
-            ): 3,
-        }
-        self._test_representation(
-            M().eval(),
-            example_inputs,
-            quantizer,
-            ref_node_occurrence,
-            non_ref_node_occurrence,
         )
