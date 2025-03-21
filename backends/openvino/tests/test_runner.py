@@ -47,7 +47,7 @@ def parse_arguments():
         help="Specify the type of tests ('ops' or 'models')",
         type=str,
         default="ops",
-        choices={"ops", "models"},
+        choices={"ops", "models", "quantizer"},
     )
 
     args, ns_args = parser.parse_known_args(namespace=unittest)
