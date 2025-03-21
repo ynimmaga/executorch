@@ -104,9 +104,6 @@ class TestPT2ERepresentation(QuantizationTestCase):
             non_ref_node_occurrence={},
         )
 
-    @unittest.skip(
-        "Enable after the fix https://github.com/openvinotoolkit/nncf/pull/3225"
-    )
     def test_dynamic_linear(self):
         class M(torch.nn.Module):
             def __init__(self) -> None:

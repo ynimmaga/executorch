@@ -89,9 +89,6 @@ class TestQuantizePT2E(PT2EQuantizationTestCase):
             ns.call_function(
                 torch.ops.quantized_decomposed.dequantize_per_tensor.default
             ): 1,
-            ns.call_function(
-                torch.ops.quantized_decomposed.dequantize_per_channel.default
-            ): 1,
         }
         self.checkGraphModuleNodes(m, expected_node_occurrence=node_occurrence)
 

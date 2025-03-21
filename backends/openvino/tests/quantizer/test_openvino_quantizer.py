@@ -191,9 +191,6 @@ class TestOpenVINOQuantizer(PT2EQuantizationTestCase):
             expected_node_list=node_list,
         )
 
-    @unittest.skip(
-        "Enable after the fix https://github.com/openvinotoolkit/nncf/pull/3225"
-    )
     def test_linear_with_dynamic_shape(self):
         quantizer = OpenVINOQuantizer()
         m_eager = TestHelperModules.TwoLinearModule().eval()
@@ -270,17 +267,14 @@ class TestOpenVINOQuantizer(PT2EQuantizationTestCase):
             expected_node_list=node_list,
         )
 
-    @unittest.skip(
-        "Enable after the fix https://github.com/openvinotoolkit/nncf/pull/3225"
-    )
     def test_dynamic_linear(self):
         quantizer = OpenVINOQuantizer()
         m_eager = TestHelperModules.TwoLinearModule().eval()
 
         node_occurrence = {
             # input and output are using quantize_per_tensor and weight is using quantize_per_channel
-            torch.ops.quantized_decomposed.quantize_per_tensor.tensor: 2,
-            torch.ops.quantized_decomposed.dequantize_per_tensor.tensor: 2,
+            torch.ops.quantized_decomposed.quantize_per_tensor.default: 2,
+            torch.ops.quantized_decomposed.dequantize_per_tensor.default: 2,
             # note: quantize op for weights are const propagated
             torch.ops.quantized_decomposed.quantize_per_channel.default: 0,
             torch.ops.quantized_decomposed.dequantize_per_channel.default: 2,
