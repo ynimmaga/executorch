@@ -6,20 +6,16 @@
 
 from collections import defaultdict
 from enum import Enum
-from typing import Any, Callable, DefaultDict, Dict, List, Optional, Tuple, Type
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
-import nncf  # type: ignore[import-untyped]
-import nncf.common.quantization as quantization  # type: ignore[import-untyped]
-import nncf.experimental.torch.fx as nncf_fx  # type: ignore[import-untyped]
+import nncf
+import nncf.common.quantization as quantization
+import nncf.experimental.torch.fx as nncf_fx
 
 import torch.fx
 
-from nncf.common.graph.graph import NNCFGraph  # type: ignore[import-untyped]
-from torch.ao.quantization.observer import (
-    HistogramObserver,
-    PerChannelMinMaxObserver,
-    UniformQuantizationObserverBase,
-)
+from nncf.common.graph.graph import NNCFGraph
+from torch.ao.quantization.observer import HistogramObserver, PerChannelMinMaxObserver
 from torch.ao.quantization.quantizer.quantizer import (
     EdgeOrNode,
     QuantizationAnnotation,
@@ -121,15 +117,13 @@ class OpenVINOQuantizer(Quantizer):
         quantization_setup = self.get_nncf_quantization_setup(model, nncf_graph)
 
         graph = model.graph
-        node_vs_torch_annotation: DefaultDict[torch.fx.Node, QuantizationAnnotation] = (
-            defaultdict(QuantizationAnnotation)
-        )
+        node_vs_torch_annotation = defaultdict(QuantizationAnnotation)
 
         for qp in quantization_setup.quantization_points.values():
             edge_or_node, annotation = self._get_edge_or_node_and_annotation(
                 graph, nncf_graph, qp, node_vs_torch_annotation
             )
-            qspec: QuantizationSpecBase = self._get_torch_ao_qspec_from_qp(qp)
+            qspec = self._get_torch_ao_qspec_from_qp(qp)
             self._fill_torch_ao_annotation(edge_or_node, qspec, annotation)
 
         for quantizer_ids in quantization_setup.unified_scale_groups.values():
@@ -205,9 +199,6 @@ class OpenVINOQuantizer(Quantizer):
             ):
                 root_quantizer_id = quantizer_id
                 nncf_node_quantizer_id = nncf_node.node_id
-        if root_quantizer_id is None:
-            msg = "Root quantizer ids can't be None"
-            raise nncf.InternalError(msg)
         return root_quantizer_id
 
     @staticmethod
@@ -307,8 +298,6 @@ class OpenVINOQuantizer(Quantizer):
         extra_args = {"eps": 1e-16}
         qconfig = qp.qconfig
         is_weight = qp.is_weight_quantization_point()
-
-        observer: Type[UniformQuantizationObserverBase]
 
         if qconfig.per_channel:
             torch_qscheme = (

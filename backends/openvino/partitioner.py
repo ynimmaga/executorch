@@ -15,9 +15,7 @@ from executorch.exir.backend.partitioner import (
     PartitionResult,
 )
 from executorch.exir.backend.utils import tag_constant_data
-from openvino.frontend.pytorch.torchdynamo.op_support import (  # type: ignore[import-untyped]
-    OperatorSupport,
-)
+from openvino.frontend.pytorch.torchdynamo.op_support import OperatorSupport
 
 from torch.export.exported_program import ExportedProgram
 from torch.fx.passes.infra.partitioner import CapabilityBasedPartitioner
@@ -55,11 +53,8 @@ class OpenvinoOperatorsSupport(OperatorSupportBase):
         if node.op != "call_function":
             return False
 
-        options: list[str] = []
-        if not isinstance(node.target, str):
-            op_type = node.target.__name__
-        else:
-            op_type = str(node.target)
+        options = []
+        op_type = node.target.__name__
         supported_ops = OperatorSupport(options)._support_dict
         if op_type == "getitem":
             return True

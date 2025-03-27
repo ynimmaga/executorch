@@ -12,9 +12,7 @@ from executorch.exir.backend.backend_details import (
     PreprocessResult,
 )
 from executorch.exir.backend.compile_spec_schema import CompileSpec
-from openvino.frontend.pytorch.torchdynamo.compile import (  # type: ignore[import-untyped]
-    openvino_compile,
-)
+from openvino.frontend.pytorch.torchdynamo.compile import openvino_compile
 
 
 @final

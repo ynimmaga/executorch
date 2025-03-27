@@ -1,10 +1,10 @@
-import timm  # type: ignore[import-untyped]
+import timm
 import torch
-import torchvision.models as torchvision_models  # type: ignore[import-untyped]
+import torchvision.models as torchvision_models
 from executorch.backends.openvino.tests.ops.base_openvino_op_test import (
     BaseOpenvinoOpTest,
 )
-from transformers import AutoModel  # type: ignore[import-untyped]
+from transformers import AutoModel
 
 classifier_params = [
     {"model": ["torchvision", "resnet50", (1, 3, 224, 224)]},
