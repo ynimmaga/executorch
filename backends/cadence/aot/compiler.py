@@ -31,11 +31,11 @@ from executorch.exir import (
     EdgeProgramManager,
     ExecutorchBackendConfig,
     ExecutorchProgramManager,
-    to_edge,
 )
 from executorch.exir.pass_base import PassResult
 from executorch.exir.passes import ToOutVarPass
 from executorch.exir.passes.sym_shape_eval_pass import HintBasedSymShapeEvalPass
+from executorch.exir.program._program import to_edge_with_preserved_ops
 from torch._inductor.decomposition import remove_decompositions
 from torch.ao.quantization.quantize_pt2e import convert_pt2e, prepare_pt2e
 
@@ -56,6 +56,7 @@ def convert_pt2(
     model: torch.nn.Module,
     inputs: tuple[object, ...],
     quantizer: CadenceQuantizer,
+    calibration_data: Optional[list[tuple[object, ...]]] = None,
     dump_graphs: bool = False,
 ) -> torch.fx.GraphModule:
     """
@@ -64,6 +65,9 @@ def convert_pt2(
     fuse the model later, if applicable. If you do not expect that behavior,
     please use quantize_and_fuse_pt2 instead, which will instantiate a
     default quantizer for you if needed.
+    If calibration data is provided, it will be used to calibrate the model. If
+    not, the inputs will be used for calibration instead, which is useful for
+    unit tests but should not be used for end-to-end use cases.
     Returns a GraphModule with the converted model.
     """
 
@@ -76,13 +80,14 @@ def convert_pt2(
         torch.ops.aten.layer_norm.default,
         torch.ops.aten.linear.default,
         torch.ops.aten.matmul.default,
+        torch.ops.aten.rms_norm.default,
     ]
     # Remove decompositions for the ops we want to keep
     # pyre-fixme[6]: For 1st argument expected `Dict[typing.Callable[..., typing.Any
     remove_decompositions(decomp_table, ops_to_keep)
     # Export with dynamo
     model_gm = (
-        torch.export.export_for_training(model, inputs)
+        torch.export.export_for_training(model, inputs, strict=True)
         .run_decompositions(decomp_table)
         .module()
     )
@@ -95,7 +100,12 @@ def convert_pt2(
     prepared_model = prepare_pt2e(model_gm, quantizer)
 
     # Calibrate
-    prepared_model(*inputs)
+    # If no calibration data is provided, use the inputs
+    if calibration_data is None:
+        calibration_data = [inputs]
+
+    for samples in calibration_data:
+        prepared_model(*samples)
 
     # Convert
     converted_model = convert_pt2e(prepared_model)
@@ -136,10 +146,14 @@ def quantize_pt2(
     model: torch.nn.Module,
     inputs: tuple[object, ...],
     quantizer: Optional[CadenceQuantizer] = None,
+    calibration_data: Optional[list[tuple[object, ...]]] = None,
     dump_graphs: bool = False,
 ) -> torch.fx.GraphModule:
     """
     Prepare, convert and fuse the model using the given quantizer.
+    If calibration data is provided, it will be used to calibrate the model. If
+    not, the inputs will be used for calibration instead, which is useful for
+    unit tests but should not be used for end-to-end use cases.
     Returns a GraphModule with the quantized model.
     """
     # Make the model inference mode by calling model.eval()
@@ -150,7 +164,9 @@ def quantize_pt2(
         quantizer = CadenceDefaultQuantizer()
 
     # Get converted graph module
-    converted_gm = convert_pt2(model, inputs, quantizer, dump_graphs)
+    converted_gm = convert_pt2(
+        model, inputs, quantizer, calibration_data, dump_graphs=dump_graphs
+    )
 
     # Get fused model
     fused_gm = fuse_pt2(converted_gm, quantizer)
@@ -186,9 +202,9 @@ def lower_ep_to_edge(
     """
     Lower an ExportedProgram to an EdgeProgramManager (in edge IR).
     """
-    # Call to_edge to convert the graph to edge IR.
+    # Call to_edge_with_preserved_ops to convert the graph to edge IR.
     # Note: dim_order is skipped (https://github.com/pytorch/executorch/issues/3704)
-    edge_prog_manager = to_edge(
+    edge_prog_manager = to_edge_with_preserved_ops(
         expo_program,
         compile_config=EdgeCompileConfig(
             _skip_dim_order=True,
@@ -201,9 +217,11 @@ def lower_ep_to_edge(
                 torch.ops.aten.linalg_vector_norm.default,
                 torch.ops.aten.unfold.default,
                 torch.ops.aten.angle.default,
+                torch.ops.aten.rms_norm.default,
             ],
         ),
         constant_methods=constant_methods,
+        preserve_ops=(torch.ops.aten.rms_norm.default,),
     )
 
     if dump_graphs:

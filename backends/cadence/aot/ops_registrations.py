@@ -162,6 +162,10 @@ lib.define(
     "quantized_fully_connected.per_tensor(Tensor src, Tensor weight, Tensor bias, int src_zero_point, "
     "int weight_zero_point, int out_multiplier, int out_shift, int out_zero_point, Tensor? offset) -> (Tensor Z)"
 )
+lib.define("where_Scalar(Tensor condition, float self, float other) -> (Tensor Z)")
+lib.define(
+    "where_Scalar.out(Tensor condition, float self, float other, *, Tensor(a!) out) -> Tensor(a!)"
+)
 
 # ------------------------------------ #
 #   Migrated from custom_ops.yaml      #
@@ -283,6 +287,15 @@ aten_lib.define(
 jarvis_nn_lib = Library("jarvis_nn_ops", "DEF")
 jarvis_nn_lib.define(
     "attention_mask.out(Tensor input, Tensor start, Tensor stop, *, Tensor(a!) out) -> Tensor(a!)"
+)
+
+# Custom ops in aten namespace. RMSNorm is usually decomposed, so having
+# an out-variant is non-standard
+
+lib_aten = Library("aten", "FRAGMENT")
+
+lib_aten.define(
+    "rms_norm.out(Tensor input, SymInt[] normalized_shape, Tensor? weight=None, float? eps=None, *, Tensor(a!) out) -> Tensor(a!)"
 )
 
 
@@ -935,3 +948,12 @@ def transposed_im2row_meta(
     output_size = torch.Size((batch_size, output_length, n_output_plane))
 
     return input.new_empty(output_size, dtype=input.dtype)
+
+
+@register_fake("cadence::where_Scalar")
+def where_Scalar_meta(
+    condition: torch.Tensor,
+    self: float,
+    other: float,
+) -> torch.Tensor:
+    return condition.new_empty(condition.size(), dtype=torch.float32)
